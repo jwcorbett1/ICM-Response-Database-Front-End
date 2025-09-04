@@ -1,7 +1,7 @@
 # ICM-Response-Database-Front-End
 Front-end of legacy database which returns pre-planned responses for crashes in ICM zones.
 
-This legacy Access database uses SQL and Visual Basic to filter through pre-planned responses to crashes along major roadways in North Carolina.  Only the front end is included here since the back end includes extensive contributions from multiple contractors besides myself.  However, you can still examine how everything is put together.
+This legacy Access database uses SQL and Visual Basic to filter through pre-planned responses to crashes along major roadways in North Carolina.  Only the front end is included here since the back end includes extensive contributions from many other contractors besides myself.  However, you can still examine how everything is put together.
 
 I made contributions to both the front and back end of this project, but my contributions to the front end centered around making the drop-down menus on the input form more responsive to the user.  The drop-downs were originally used a series of interdependent SQL queries where the options in each drop-down menu changed based on what the user selected higher up on the form.  This caused repeated and unnecessary queries to the back end each time the user made a selection.  Since the back end of this database is stored on a file server and at this point cannot realistically be moved to another machine, the challenge was finding a way to minimize hits on the back end database.
 
