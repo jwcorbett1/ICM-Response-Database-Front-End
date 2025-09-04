@@ -1,0 +1,250 @@
+' MODULE DESCRIPTION
+' This module loads and holds a snapshot of each relevant database table into memory
+' Doing this prevents the data from being reloaded each time a new query is run
+' Since the Z:\ drive is the main bottleneck here, this helps speed up the ICM database
+
+
+Option Compare Database
+
+' Global Variables
+' Each of these holds a snapshot of the records previously loaded from the database - helps minimize loading data from the Z:\ drive for each query
+Public tblDMRoutes As DAO.Recordset          ' Holds the snapshot of the records from the "tblDMRoutes" table
+Public tblDMRouteDecisions As DAO.Recordset  ' Holds the snapshot of the records from the "tblDMRouteDecisions" table
+
+' --------------------------------------------------------------------------------------------------
+' LOAD/RELEASE SUBROUTINES
+' --------------------------------------------------------------------------------------------------
+
+' Called from Form_Load()
+Public Sub Load_Table_Snapshots()
+    
+    ' Create a snapshot of the records in each table and store it in memory
+    ' Using "dbOpenSnapshot" here prevents us from accidentally changing something we didn't mean to
+    ' Using a query instead of directly using the table makes it easy to sort the records in a sensible order.
+    Set tblDMRoutes = CurrentDb.OpenRecordset("qryTblDMRoutes", dbOpenSnapshot)
+    Set tblDMRouteDecisions = CurrentDb.OpenRecordset("qryTblDMRouteDecisions", dbOpenSnapshot)
+    
+End Sub
+
+' Called from Form_Unload()
+Public Sub Release_Table_Snapshots()
+    
+    ' Clean up the global variables
+    Set tblDMRoutes = Nothing
+    Set tblDMRouteDecisions = Nothing
+    
+End Sub
+
+' --------------------------------------------------------------------------------------------------
+' SELECTION FUNCTIONS
+'
+' These functions filter the records loaded into memory and return a value or list of values from those records
+' --------------------------------------------------------------------------------------------------
+
+' Creates a value list for an MS Access database field
+' The value list will only contain the distinct values (no duplicates) from a particular column
+' NOTE:  This must be a function (not a subroutine) in order to return the created value list
+Public Function Select_Distinct_Values(field As String, records As DAO.Recordset, filter As String) As String
+    
+    Dim filteredRecords As DAO.Recordset  ' Holds the remaining records after we filter them using the filter string
+    Dim distinctValues As New Collection  ' Holds the list of distinct values found in the target database field
+    Dim lastAddition As String            ' Holds the previous item added to the "distinctValues" collection - used to minimize duplicate insertion attempts
+    Dim valueList As String               ' Holds the value list created from the "distinctValues" collection
+    
+    ' Set the filter to use for a new record set, and then create a new record set using that filter
+    ' If an error occurs, redirect to the "ErrorHandler" section
+    On Error GoTo ErrorHandler
+        records.filter = filter
+        Set filteredRecords = records.OpenRecordset
+        
+    ' Cancel the error handling redirect set above
+    On Error GoTo 0
+    
+    ' Initialize the previous item added to the "distinctValues" collection
+    ' We are using a dummy value here that should never appear in any table of the database
+    lastAddition = "Invalid Value - Dummy String"
+    
+    ' Loop through the filtered records and try to copy each value of the target field to the "distinctValues" collection
+    Do Until filteredRecords.EOF
+        Append_Distinct_Values distinctValues, filteredRecords.Fields(field).Value, lastAddition
+        filteredRecords.MoveNext
+    Loop
+    
+    ' Convert the "distinctValues" collection into a value list string
+    valueList = Create_Value_List(distinctValues)
+    
+    ' Clean up the object variables
+    Set filteredRecords = Nothing
+    Set distinctValues = Nothing
+    
+    ' Return the completed value list and exit the function
+    Select_Distinct_Values = valueList
+    Exit Function
+    
+ErrorHandler:
+    
+    ' If an error occurs, return an empty string
+    Select_Distinct_Values = ""
+    
+End Function
+
+' Creates a value list for a pair of MS Access database fields
+' The value list will only contain the distinct value pairs (no duplicates) after combining the columns
+' NOTE:  This must be a function (not a subroutine) in order to return the created value list
+Public Function Select_Distinct_Pairs(firstField As String, separator As String, secondField As String, records As DAO.Recordset, filter As String) As String
+    
+    Dim filteredRecords As DAO.Recordset  ' Holds the remaining records after we filter them using the filter string
+    Dim distinctValues As New Collection  ' Holds the list of distinct value pairs found in the target database fields
+    Dim lastAddition As String            ' Holds the previous item added to the "distinctValues" collection - used to minimize duplicate insertion attempts
+    Dim valueList As String               ' Holds the value list created from the "distinctValues" collection
+    
+    ' Set the filter to use for a new record set, and then create a new record set using that filter
+    ' If an error occurs, redirect to the "ErrorHandler" section
+    On Error GoTo ErrorHandler
+        records.filter = filter
+        Set filteredRecords = records.OpenRecordset
+        
+    ' Cancel the error handling redirect set above
+    On Error GoTo 0
+    
+    ' Initialize the previous item added to the "distinctValues" collection
+    ' We are using a dummy value here that should never appear in any table of the database
+    lastAddition = "Invalid Value - Dummy String"
+    
+    ' Loop through the filtered records and try to copy each pair of values from the target fields to the "distinctValues" collection
+    ' The pair of values is formed by concatenating the first field plus the separator string plus the second field
+    Do Until filteredRecords.EOF
+        Append_Distinct_Values distinctValues, filteredRecords.Fields(firstField).Value & separator & filteredRecords.Fields(secondField).Value, lastAddition
+        filteredRecords.MoveNext
+    Loop
+    
+    ' Convert the "distinctValues" collection into a value list string
+    valueList = Create_Value_List(distinctValues)
+    
+    ' Clean up the object variables
+    Set filteredRecords = Nothing
+    Set distinctValues = Nothing
+    
+    ' Return the completed value list and exit the function
+    Select_Distinct_Pairs = valueList
+    Exit Function
+    
+ErrorHandler:
+    
+    ' If an error occurs, return an empty string
+    Select_Distinct_Pairs = ""
+    
+End Function
+
+' Returns the first value from an MS Access database field
+' This function should only be called when an SQL query would otherwise be expected to return exactly one value anyway
+' NOTE:  This must be a function (not a subroutine) in order to return the created value list
+Public Function Select_First_Value(field As String, records As DAO.Recordset, filter As String) As String
+    
+    Dim filteredRecords As DAO.Recordset  ' Holds the remaining records after we filter them using the filter string
+    Dim firstValue As String              ' Holds the first value of the target field - returned to caller
+    
+    ' Set the filter to use for a new record set, and then create a new record set using that filter
+    ' If an error occurs, redirect to the "ErrorHandler" section
+    On Error GoTo ErrorHandler
+        records.filter = filter
+        Set filteredRecords = records.OpenRecordset
+        
+    ' Cancel the error handling redirect set above
+    On Error GoTo 0
+    
+    ' If there are any records left in the filtered set, get the value of the target field for the first record
+    If Not filteredRecords.EOF Then
+        firstValue = filteredRecords.Fields(field).Value
+        
+    ' If there are not any records left in the filtered set, set the first value to an empty string
+    Else
+        firstValue = ""
+    End If
+    
+    ' Clean up the object variable
+    Set filteredRecords = Nothing
+    
+    ' Return the completed value list and exit the function
+    Select_First_Value = firstValue
+    Exit Function
+    
+ErrorHandler:
+    
+    ' If an error occurs, return an empty string
+    Select_First_Value = ""
+    
+End Function
+
+' --------------------------------------------------------------------------------------------------
+' HELPER SUBROUTINES/FUNCTIONS
+'
+' Called from the selection functions to handle repetitive tasks
+' --------------------------------------------------------------------------------------------------
+
+' Helper Subroutine - simplifies error handling when using a Collection object
+' Adds an item to the collection, but only if it's not already in the collection
+' Called from Select_Distinct_Values(), Select_Distinct_Pairs(), and Select_First_Value()
+Private Sub Append_Distinct_Values(distinctValues As Collection, item As String, ByRef lastAddition As String)
+    
+    ' Check if this is the same as the previous item we added
+    ' NOTE:  "<>" is the "not equal to" operator in VBA
+    If lastAddition <> item Then
+        
+        ' Remember this item for the next call to this subroutine
+        lastAddition = item
+        
+        ' Try to add the item to the list of distinct values
+        ' We are using the value of the item as its own key so if the item is already in the collection, it will raise an error
+        ' If an error occurs, then the item will not be added - no duplicates
+        ' If no error occurs, then the item was not already in the list, but it has ALSO now been added to the list
+        On Error GoTo ErrorHandler
+            distinctValues.Add item, item
+            
+    End If
+    
+    ' If no error occurred, skip over the error handler code below
+    Exit Sub
+    
+ErrorHandler:
+    
+    ' Error 457 happens when an item is added to the collection using the same key as another item already in the collection
+    ' We will ignore this error since the entire point of this subroutine is to create a list without duplicate values
+    ' However, if anything else goes wrong, report it
+    ' NOTE:  "<>" is the "not equal to" operator in VBA
+    If Err.Number <> 457 Then
+        Err.Raise Err.Number
+    End If
+    
+End Sub
+
+' Helper Function
+' Converts the provided collection into a value list string and returns it
+' Called from Select_Distinct_Values() and Select_Distinct_Pairs()
+Private Function Create_Value_List(distinctValues As Collection) As String
+    
+    Dim valueList As String
+    
+    ' Initialize the value list to the first item in the "distinctValues" collection
+    If distinctValues.Count >= 1 Then
+        valueList = distinctValues.item(1)
+        
+    ' However, if the collection is empty, initialize it to an empty string
+    ' NOTE:  Generally, the collection shouldn't be empty.
+    '        However, there are a few minor edge cases where it might be (usually because the user is doing something bizarre)
+    '        This just covers all the bases no matter what they do
+    Else
+        valueList = ""
+    End If
+    
+    ' If the "distinctValues" collection contains more than one item (it probably will), also append the additional items separated by semicolons
+    If distinctValues.Count >= 2 Then
+        For index = 2 To distinctValues.Count
+            valueList = valueList & ";" & distinctValues.item(index)
+        Next index
+    End If
+    
+    ' Return the finished value list
+    Create_Value_List = valueList
+    
+End Function

@@ -1,0 +1,571 @@
+Option Compare Database
+
+' Global Variables
+Private DecisionMatrixId As String  ' Holds the foreign key for the "tblDMRouteDecisions" table - used in several filters
+Private incidentDuration As Double  ' Holds the expected duration of the incident in minutes -  type determined by the needs of DateAdd() function
+
+' --------------------------------------------------------------------------------------------------
+' FORM SUBROUTINES
+' --------------------------------------------------------------------------------------------------
+
+Private Sub Form_Load()
+    
+    ' Load snapshots of the relevant tables
+    ' See the "Table Snapshots" module for details
+    Load_Table_Snapshots
+    
+    ' Initialize the ICM routes dropdown menu (this is the best place I could find for this call)
+    Load_ICM_Routes
+    
+    ' Initialize the date, the time, and the day of the week
+    Update_Date_Time_DayOfWeek
+    
+End Sub
+
+Private Sub Form_Unload(Cancel As Integer)
+    
+    ' Release the table snapshots loaded above
+    ' See the "Table Snapshots" module for details
+    Release_Table_Snapshots
+    
+End Sub
+
+Private Sub Form_Timer()
+    
+    ' When "Timer Interval" milliseconds have ellapsed, close Access and save all data on this form
+    ' This ensures no one can lock up the ICM Response Database (again) by just forgetting to close the file and going home
+    ' NOTE:  "Timer Interval" is a property on the property sheet of the "frmInput" form
+    '        It is directly below the "On Timer" event proceedure this subroutine is connected to
+    DoCmd.Quit acQuitSaveAll
+    
+End Sub
+
+' --------------------------------------------------------------------------------------------------
+' CONTROL FIELD SUBROUTINES
+' --------------------------------------------------------------------------------------------------
+
+' Helper Subroutine
+' Called from Form_Load()
+Private Sub Load_ICM_Routes()
+    
+    Dim valueList As String
+    
+    ' CREATE THE DROPDOWN MENU FOR THE ICM ROUTE
+    ' ------------------------------------------
+    
+    ' Create a value list from the "DMSections" field which will contain only the distinct values (no duplicates) in that field
+    ' Use the previously loaded "tblDMRoutes" table, but don't apply any filter to the records
+    valueList = Select_Distinct_Values("DMSections", tblDMRoutes, "")
+    
+    ' Set the data type to a value list, then apply the value list we just created
+    cmbICM_Route.RowSourceType = "Value List"
+    cmbICM_Route.RowSource = valueList
+    
+End Sub
+
+Private Sub cmbICM_Route_AfterUpdate()
+    
+    Dim filter As String
+    Dim valueList As String
+    
+    ' When this field changes, clear all the fields below it
+    Clear_Direction
+    
+    ' CREATE THE DROPDOWN MENU FOR THE DIRECTION
+    ' ------------------------------------------
+    
+    ' Filter for only the records which match the ICM route
+    filter = "DMSections = '" & cmbICM_Route.Value & "'"
+    
+    ' Create a value list from the "Direction" field which will contain only the distinct values (no duplicates) in that field
+    ' Use the previously loaded "tblDMRoutes" table and the filter specified above
+    valueList = Select_Distinct_Values("Direction", tblDMRoutes, filter)
+    
+    ' Set the data type to a value list, then apply the value list we just created
+    cmbDirection.RowSourceType = "Value List"
+    cmbDirection.RowSource = valueList
+    
+End Sub
+
+Private Sub cmbDirection_AfterUpdate()
+    
+    Dim filter As String
+    Dim valueList As String
+    
+    ' When this field changes, clear all the fields below it
+    Clear_IncidentLocation
+    
+    ' CREATE THE DROPDOWN MENU FOR THE INCIDENT LOCATION
+    ' --------------------------------------------------
+    
+    ' Filter for only the records which match the ICM route and direction
+    filter = "DMSections = '" & cmbICM_Route.Value & "' And "
+    filter = filter & "Direction = '" & cmbDirection.Value & "'"
+    
+    ' Create a value list from the "BeginMM" and "EndMM" fields which will contain only the distinct value pairs (no duplicates) in those fields
+    ' Use the previously loaded "tblDMRoutes" table and the filter specified above
+    valueList = Select_Distinct_Pairs("BeginMM", "-", "EndMM", tblDMRoutes, filter)
+    
+    ' Set the data type to a value list, then apply the value list we just created
+    cmbIncidentLocation.RowSourceType = "Value List"
+    cmbIncidentLocation.RowSource = valueList
+    
+End Sub
+
+Private Sub cmbIncidentLocation_AfterUpdate()
+    
+    Dim location As Variant
+    Dim mileMarkers() As String
+    Dim filter As String
+    Dim valueList As String
+    
+    ' When this field changes, clear all the fields below it
+    Clear_LaneStatus
+    
+    ' Force a requery for the location map subform
+    ' We now have enough information for this query to actually display something
+    sfrmInput_Map.Requery
+    
+    ' FIND AND SAVE THE DECISION MATRIX ID
+    ' ------------------------------------
+    
+    ' Get the incident location from the control field
+    location = cmbIncidentLocation.Value
+    
+    ' If the location is not null, split the location into mile markers between the dash
+    If Not IsNull(location) Then
+        mileMarkers = Split(location, "-")
+        
+    ' If the location is null, create an array containing two empty strings
+    ' Since the Split() function removes the dash and returns only what's on either side of it, this will do the job
+    Else
+        mileMarkers = Split("-", "-")  ' Yes this is weird, but it works
+    End If
+    
+    ' Filter for only the records which match the ICM route, direction, beginning MM, and ending MM
+    filter = "DMSections = '" & cmbICM_Route.Value & "' And "
+    filter = filter & "Direction = '" & cmbDirection.Value & "' And "
+    filter = filter & "BeginMM = '" & mileMarkers(0) & "' And "
+    filter = filter & "EndMM = '" & mileMarkers(1) & "'"
+    
+    ' Get the first value from the "DecisionMatrixId" field (there should only be one match)
+    ' Use the previously loaded "tblDMRoutes" table and the filter specified above
+    DecisionMatrixId = Select_First_Value("DecisionMatrixId", tblDMRoutes, filter)  ' Global variable so we can use this value again later
+    
+    ' CREATE THE DROPDOWN MENU FOR LANES CLOSED
+    ' -----------------------------------------
+    
+    ' Filter for only the records which match the decision matrix ID
+    filter = "DecisionMatrixId = '" & DecisionMatrixId & "'"
+    
+    ' Create a value list from the "LanesClosed" field which will contain only the distinct values (no duplicates) in that field
+    ' Use the previously loaded "tblDMRouteDecisions" table and the filter specified above
+    ' NOTE:  We are switching to the "tblDMRouteDecisions" table here instead of using the "tblDMRoutes" table as we previously did above
+    valueList = Select_Distinct_Values("LanesClosed", tblDMRouteDecisions, filter)
+    
+    ' Set the data type to a value list, then apply the value list we just created
+    cmbLanesClosed.RowSourceType = "Value List"
+    cmbLanesClosed.RowSource = valueList
+    
+End Sub
+
+Private Sub cmbLanesClosed_AfterUpdate()
+    
+    Dim filter As String
+    Dim LanesOpen As String
+    Dim valueList As String
+    
+    ' When this field changes, clear all the fields below it
+    Clear_ExpectedDuration
+    
+    ' UPDATE THE LANES OPEN FIELD
+    ' ---------------------------
+    
+    ' Filter for only the records which match the decision matrix ID and the number of lanes closed
+    ' This filter will be used for both calls to Select_Distinct_Values() below
+    filter = "DecisionMatrixId = '" & DecisionMatrixId & "' And "
+    filter = filter & "LanesClosed = " & cmbLanesClosed.Value
+    
+    ' Get the first value from the "LanesOpen" field (there should only be one match)
+    ' Use the previously loaded "tblDMRouteDecisions" table and the filter specified above
+    LanesOpen = Select_First_Value("LanesOpen", tblDMRouteDecisions, filter)
+    
+    ' Set the visible text field to the first (and hopefully only) item in the value list
+    txtLaneOpen.Value = LanesOpen
+    
+    ' CREATE THE DROPDOWN MENU FOR THE EXPECTED DURATION
+    ' --------------------------------------------------
+    
+    ' Create a value list from the "ExpectedDurationMinutes" field which will contain only the distinct values (no duplicates) in that field
+    ' Use the previously loaded "tblDMRouteDecisions" table, and reuse the filter specified above
+    valueList = Select_Distinct_Values("ExpectedDurationMinutes", tblDMRouteDecisions, filter)
+    
+    ' Set the data type to a value list, then apply the value list we just created
+    cmbExpectedDuration.RowSourceType = "Value List"
+    cmbExpectedDuration.RowSource = valueList
+    
+End Sub
+
+Private Sub cmbExpectedDuration_AfterUpdate()
+    
+    Dim filter As String
+    Dim thresholdQuestion As String
+    Dim valueList As String
+    
+    ' When this field changes, clear all the fields below it
+    Clear_ThresholdQuestion
+    
+    ' UPDATE THE QUEUE THRESHOLD QUESTION
+    ' -----------------------------------
+    
+    ' Filter for only the records which match the decision matrix ID
+    filter = "DecisionMatrixId = '" & DecisionMatrixId & "'"
+    
+    ' Get the first value from the "QueueThresholdQuestion" field (there should only be one match)
+    ' Use the previously loaded "tblDMRoutes" table and the filter specified above
+    thresholdQuestion = Select_First_Value("QueueThresholdQuestion", tblDMRoutes, filter)
+    
+    ' Set the visible text field to the first value from the field
+    txtQues.Value = thresholdQuestion
+    
+    ' CREATE THE DROPDOWN MENU FOR THRESHOLD MET
+    ' ------------------------------------------
+    
+    ' Change the filter
+    ' Filter for only the records which match the decision matrix ID, the number of lanes closed, and the expected duration
+    filter = "DecisionMatrixId = '" & DecisionMatrixId & "' And "
+    filter = filter & "LanesClosed = " & cmbLanesClosed.Value & " And "
+    filter = filter & "ExpectedDurationMinutes = '" & cmbExpectedDuration.Value & "'"
+    
+    ' Create a value list from the "QueueThresholdMet" field which will contain only the distinct values (no duplicates) in that field
+    ' Use the previously loaded "tblDMRouteDecisions" table, and the new filter specified above
+    ' NOTE:  We are switching to the "tblDMRouteDecisions" table here instead of using the "tblDMRoutes" table as we previously did above
+    valueList = Select_Distinct_Values("QueueThresholdMet", tblDMRouteDecisions, filter)
+    
+    ' Set the data type to a value list, then apply the value list we just created
+    ' NOTE:  I am aware a previous developer misspelled "threshold" in the control name below
+    '        Since the mistake has no effect on how the form works, I don't see the point in fixing it at this point
+    cmbThersholdMetQues.RowSourceType = "Value List"
+    cmbThersholdMetQues.RowSource = valueList
+    
+End Sub
+
+' This subroutine pulls the AM peak, PM peak, and overnight times from the saved database tables
+' Next, it figures out the incident start time, end time, and duration
+' Finally, it determines which time frame (AM peak, PM peak, etc.) this incident falls into based on its start and end times
+Private Sub cmbThersholdMetQues_AfterUpdate()
+    
+    ' ----------------------------------------------------------------------------------------------
+    ' LOCAL VARIABLES
+    ' ----------------------------------------------------------------------------------------------
+    
+    ' Used to store the time frames - "time" here is just the decimal portion of a date, hence the unexpected variable type
+    Dim amPeakStart As Date
+    Dim amPeakEnd As Date
+    Dim pmPeakStart As Date
+    Dim pmPeakEnd As Date
+    Dim overnightStart As Date
+    
+    ' Used to store the incident parameters (again, "time" is just the decimal part of a date)
+    Dim incidentStart As Date
+    Dim incidentEnd As Date
+    
+    ' Used to filter the records down to a single ICM segment
+    Dim filter As String
+    
+    ' ----------------------------------------------------------------------------------------------
+    ' GET TIME FRAMES (AM peak, PM peak, etc.)
+    ' ----------------------------------------------------------------------------------------------
+    
+    ' We already determined above the decision matrix ID for this incident location
+    ' Since that is also the primary key for the target table, we can just filter to that value and guarantee a single record
+    filter = "DecisionMatrixId = '" & DecisionMatrixId & "'"
+    
+    ' Get the AM Peak start and end times
+    amPeakStart = Select_First_Value("AmPeakStart", tblDMRoutes, filter)
+    amPeakEnd = Select_First_Value("AmPeakEnd", tblDMRoutes, filter)
+    
+    ' Get the PM Peak start and end times
+    pmPeakStart = Select_First_Value("PmPeakStart", tblDMRoutes, filter)
+    pmPeakEnd = Select_First_Value("PmPeakEnd", tblDMRoutes, filter)
+    
+    ' Get the overnight start time (we don't actually need the overnight end time)
+    overnightStart = Select_First_Value("OvernightStart", tblDMRoutes, filter)
+    
+    ' ----------------------------------------------------------------------------------------------
+    ' GET INCIDENT PARAMETERS (incident start, end, and duration)
+    ' ----------------------------------------------------------------------------------------------
+    
+    ' Update the date, the time, and the day of the week
+    ' This ensures we are using the correct parameters below
+    Update_Date_Time_DayOfWeek
+    
+    ' If the expected duration in the dropdown menu is less than 1/2 hour, set "incidentDuration" to 30 minutes
+    If cmbExpectedDuration.Value = "<0.5 hour" Then
+        incidentDuration = 30  ' Global variable so we can use this value again later
+        
+    ' If the expected duration in the dropdown menu is between 1/2 hour and 2 hours, set "incidentDuration" to 90 minutes
+    ElseIf cmbExpectedDuration.Value = ">0.5-2< hours" Then
+        incidentDuration = 90  ' Global variable so we can use this value again later
+        
+    ' If the expected duration in the dropdown menu is greater than 2 hours (or really any other value), set "incidentDuration" to 120 minutes
+    Else
+        incidentDuration = 120  ' Global variable so we can use this value again later
+    End If
+    
+    ' The incident start time is just the current time
+    ' The incident end time is the start time plus the incident duration
+    incidentStart = dNT.Value
+    incidentEnd = DateAdd("n", incidentDuration, incidentStart)
+    
+    ' ----------------------------------------------------------------------------------------------
+    ' DETERMINE INCIDENT TIME OF DAY
+    ' ----------------------------------------------------------------------------------------------
+    
+    ' If the incident overlaps any part of the AM peak hours, set the time of day to "AM Peak"
+    If incidentStart <= amPeakEnd And incidentEnd >= amPeakStart Then
+        cmbTimeOfDay.Value = "AM Peak"
+        
+    ' If the incident overlaps any part of the PM peak hours, set the time of day to "PM Peak"
+    ElseIf incidentStart <= pmPeakEnd And incidentEnd >= pmPeakStart Then
+        cmbTimeOfDay.Value = "PM Peak"
+        
+    ' If the incident is between AM peak hours and PM peak hours, set the time of day to "Off Peak Day"
+    ElseIf incidentStart > amPeakEnd And incidentStart < pmPeakStart Then
+        cmbTimeOfDay.Value = "Off Peak Day"
+        
+    ' If the incident is between PM peak hours and overnight hours, set the time of day to "Off Peak Evening"
+    ElseIf incidentStart > pmPeakEnd And incidentStart <= overnightStart Then
+        cmbTimeOfDay.Value = "Off Peak Evening"
+        
+    ' If the incident is outside of any of those times, set the time of day to "Overnight"
+    Else
+        cmbTimeOfDay.Value = "Overnight"
+    End If
+    
+    ' ----------------------------------------------------------------------------------------------
+    
+End Sub
+
+Private Sub cmbWeekendResponse_AfterUpdate()
+    
+    ' Update the date, the time, and the day of the week
+    Update_Date_Time_DayOfWeek
+    
+End Sub
+
+' --------------------------------------------------------------------------------------------------
+' PREVIEW BUTTON SUBROUTINES
+' --------------------------------------------------------------------------------------------------
+
+Private Sub cmdPreviewResponses_Click()
+    
+    Dim errorMessage As String
+    
+    ' Check that the form contains valid entries
+    ' Yes, even though MS Access should be limiting entries to just the value list, it is still possible to input invalid data
+    If Compare_To_ValueList(cmbICM_Route.Value, cmbICM_Route.RowSource) And _
+       Compare_To_ValueList(cmbDirection.Value, cmbDirection.RowSource) And _
+       Compare_To_ValueList(cmbIncidentLocation.Value, cmbIncidentLocation.RowSource) And _
+       Compare_To_ValueList(cmbLanesClosed.Value, cmbLanesClosed.RowSource) And _
+       Compare_To_ValueList(cmbExpectedDuration.Value, cmbExpectedDuration.RowSource) And _
+       Compare_To_ValueList(cmbThersholdMetQues.Value, cmbThersholdMetQues.RowSource) Then
+            
+            ' If the output form is already open (probably from a previous query), close it.
+            If CurrentProject.AllForms("frmOutput").IsLoaded Then
+                DoCmd.Close acForm, "frmOutput"  ' The parameter "acForm" is the type of object we're trying to close, and "frmOutput" is the name of the object.
+            End If
+            
+            ' If all the controls are set to valid options, open the output form (named "frmOutput")
+            ' This will indirectly run the "qryOutput" query, which will pull its parameters directly from the input form
+            ' The output form will then use the results from the "qryOutput" query to display the appropriate ICM response
+            DoCmd.OpenForm "frmOutput"
+            
+            ' Set a hidden field on the input form - the output form needs access to this value for the 30 min/120 min popup boxes
+            txtExpectedDurationMinutes.Value = incidentDuration
+            
+            ' We are done and everything is good - skip over the error message box below
+            Exit Sub
+            
+    End If
+    
+    ' If one of the fields contains invalid input, display an error message to the user
+    errorMessage = "All fields must be filled in with valid input before clicking 'Preview Response'."
+    MsgBox errorMessage
+    
+End Sub
+
+' Helper Function
+' Called from cmdPreviewResponses_Click()
+Private Function Compare_To_ValueList(controlValue As Variant, valueList As String) As Boolean
+    
+    Dim options() As String
+    Dim result As Boolean
+    Dim index As Integer
+    
+    ' If anything goes wrong below, the return value will default to False
+    result = False
+    
+    ' Split the value list into an array of possible options
+    options = Split(valueList, ";")
+    
+    ' Loop through all the options in the array
+    ' Compare the control's current value to each of the possible options
+    For index = LBound(options) To UBound(options)
+        If controlValue = options(index) Then
+            
+            ' If we find a match, change the return value to True
+            result = True
+            
+        End If
+    Next index
+    
+    ' Return the result to the caller
+    Compare_To_ValueList = result
+    
+End Function
+
+' --------------------------------------------------------------------------------------------------
+' CLEAR BUTTON SUBROUTINES
+' --------------------------------------------------------------------------------------------------
+
+Private Sub cmdClear_Click()
+    
+    ' This is the start of a chain of calls (listed in order below this subroutine) which will eventually clear the entire form
+    ' The clearing process is set up this way because whenever a field changes, it also needs to clear all the fields below it
+    ' With this structure, the appropriate AfterUpdate() subroutine can jump into this chain at the right spot with just one call
+    
+    ' Clear the first field
+    cmbICM_Route.Value = ""
+    
+    ' And then clear the next field down (and the one after that, and the one after that...)
+    Clear_Direction
+    
+End Sub
+
+' Helper Subroutine
+' Called from cmdClear_Click() and cmbICM_Route_AfterUpdate()
+Private Sub Clear_Direction()
+    
+    ' Clear the data type and data source
+    cmbDirection.RowSource = ""
+    cmbDirection.RowSourceType = ""
+    
+    ' Clear the field itself
+    cmbDirection.Value = ""
+    
+    ' And then clear the next field down
+    Clear_IncidentLocation
+    
+End Sub
+
+' Helper Subroutine
+' Called from Clear_Direction() and cmbDirection_AfterUpdate()
+Private Sub Clear_IncidentLocation()
+    
+    ' Clear the data type and data source
+    cmbIncidentLocation.RowSource = ""
+    cmbIncidentLocation.RowSourceType = ""
+    
+    ' Clear the field itself
+    cmbIncidentLocation.Value = ""
+    
+    ' Requery the location map (this will blank it)
+    sfrmInput_Map.Requery
+    
+    ' And then clear the next field down
+    Clear_LaneStatus
+    
+End Sub
+
+' Helper Subroutine
+' Called from Clear_IncidentLocation() and cmbIncidentLocation_AfterUpdate()
+Private Sub Clear_LaneStatus()
+    
+    ' Clear the data type and data source
+    cmbLanesClosed.RowSource = ""
+    cmbLanesClosed.RowSourceType = ""
+    
+    ' Clear the field itself
+    cmbLanesClosed.Value = ""
+    
+    ' And then clear the next field down
+    Clear_ExpectedDuration
+    
+End Sub
+
+' Helper Subroutine
+' Called from Clear_LaneStatus() and cmbLanesClosed_AfterUpdate()
+Private Sub Clear_ExpectedDuration()
+    
+    ' Clear the lane open text field
+    txtLaneOpen.Value = ""
+    
+    ' Clear the data type and data source for the expected duration
+    cmbExpectedDuration.RowSource = ""
+    cmbExpectedDuration.RowSourceType = ""
+    
+    ' Clear the field itself
+    cmbExpectedDuration.Value = ""
+    
+    ' And then clear the next field down
+    Clear_ThresholdQuestion
+    
+End Sub
+
+' Helper Subroutine
+' Called from Clear_ExpectedDuration() and cmbExpectedDuration_AfterUpdate()
+Private Sub Clear_ThresholdQuestion()
+    
+    ' Reset both of the threshold question and the weekend response dropdown to their default values
+    txtQues.Value = "Threshold Question"
+    cmbWeekendResponse = "No"
+    
+    ' Clear the data type and data source for the threshold met question
+    ' NOTE:  I am aware a previous developer misspelled "threshold" in the control name below
+    '        Since the mistake has no effect on how the form works, I don't see the point in fixing it at this point
+    cmbThersholdMetQues.RowSource = ""
+    cmbThersholdMetQues.RowSourceType = ""
+    
+    ' Clear the field itself
+    cmbThersholdMetQues.Value = ""
+    
+    ' Clear the time of day
+    cmbTimeOfDay.Value = ""
+    
+    ' Also reset the date, the time, and the day of the week
+    Update_Date_Time_DayOfWeek
+    
+End Sub
+
+' Helper Subroutine
+' Called from:
+'   Form_Load()
+'   cmbThersholdMetQues_AfterUpdate()
+'   cmbWeekendResponse_AfterUpdate()
+'   Clear_ThresholdQuestion()
+Private Sub Update_Date_Time_DayOfWeek()
+    
+    Dim DayOfWeek As Integer
+    
+    ' This is the end of the chain started above in cmdClear_Click()
+    ' This subroutine is also called from several other places on top of being part of this chain
+    
+    ' Set the current date and time to now
+    ' NOTE:  dNT = datNowTime (a previous developer renamed the control, but not the label for the control)
+    datNowDate.Value = Date
+    dNT.Value = Time
+    
+    ' Convert the current date to a day of the week (1 = Sunday, 7 = Saturday)
+    DayOfWeek = Weekday(datNowDate.Value, 1)
+    
+    ' If "weekend response" is set to "yes", or the day of the week is 1 or 7, use weekend response
+    If cmbWeekendResponse.Value = "Yes" Or DayOfWeek = 1 Or DayOfWeek = 7 Then
+        cmbDayOfWeek = "Weekend"
+        
+    ' Otherwise, use weekday response
+    Else
+        cmbDayOfWeek = "Weekday"
+    End If
+    
+End Sub
